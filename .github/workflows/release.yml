@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  test:
+    name: Test
+    uses: ./.github/workflows/test.yml
+  publish_docker:
+    name: Publish to Docker Hub
+    uses: ./.github/workflows/publish_docker.yml
+    needs: test
+    if: github.repository == 'ParadoxAlarmInterface/pai'
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+  publish_pypi:
+    name: Publish to PyPI
+    needs: test
+    if: github.repository == 'ParadoxAlarmInterface/pai'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/paradox-alarm-interface
+    permissions:
+      id-token: write
+    steps:
+    - uses: actions/checkout@v7
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.x'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build
+    - name: Build package
+      run: python -m build
+    - name: Publish package
+      uses: pypa/gh-action-pypi-publish@release/v1

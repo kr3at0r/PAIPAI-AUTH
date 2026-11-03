@@ -1,0 +1,77 @@
+import asyncio
+import logging
+from typing import Callable, Optional
+
+from construct import Container
+
+from paradox.config import config as cfg
+from paradox.lib.handlers import FutureHandler, HandlerRegistry, PersistentHandler
+
+logger = logging.getLogger("PAI").getChild(__name__)
+
+
+class EventMessageHandler(PersistentHandler):
+    def can_handle(self, data) -> bool:
+        # Guard: PRT3 messages are dataclasses, not binary Containers.
+        if not isinstance(data, Container):
+            return False
+        values = data.fields.value
+        # MG6250 frames have no `po` sub-struct; skip rather than raise.
+        return (
+            hasattr(values, "po")
+            and values.po.command == 0xE
+            and hasattr(values, "event")
+        )
+
+
+class ErrorMessageHandler(PersistentHandler):
+    def can_handle(self, data) -> bool:
+        # Guard: PRT3 messages are dataclasses, not binary Containers.
+        if not isinstance(data, Container):
+            return False
+        values = data.fields.value
+        # MG6250 frames have no `po` sub-struct; skip rather than raise.
+        return (
+            hasattr(values, "po")
+            and values.po.command == 0x7
+            and hasattr(values, "message")
+        )
+
+
+class AsyncMessageManager:
+    def __init__(self):
+        super().__init__()
+
+        self.handler_registry = HandlerRegistry()
+        self.raw_handler_registry = HandlerRegistry()
+
+    async def wait_for_message(
+        self,
+        check_fn: Optional[Callable[[Container], bool]] = None,
+        timeout=cfg.IO_TIMEOUT,
+    ) -> Container:
+        return await self.handler_registry.wait_until_complete(
+            FutureHandler(check_fn), timeout
+        )
+
+    def register_raw_handler(self, handler):
+        self.raw_handler_registry.append(handler)
+
+    def deregister_raw_handler(self, name):
+        self.raw_handler_registry.remove_by_name(name)
+
+    def register_handler(self, handler):
+        self.handler_registry.append(handler)
+
+    def deregister_handler(self, name):
+        self.handler_registry.remove_by_name(name)
+
+    def schedule_message_handling(self, message: Container):
+        return asyncio.get_running_loop().create_task(
+            self.handler_registry.handle(message)
+        )
+
+    def schedule_raw_message_handling(self, message: Container):
+        return asyncio.get_running_loop().create_task(
+            self.raw_handler_registry.handle(message)
+        )
